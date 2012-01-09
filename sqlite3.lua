@@ -106,30 +106,6 @@ function Connection:rows(sql, ...)
 	end, stmt
 end
 
-function Connection:exec(sql, values)
-	local stmt
-	local bind = type(values) == 'table'
-	repeat
-		stmt, sql = self:prepare(sql)
-		if not stmt then
-			if sql == 'nosql' then break end
-			return nil, sql
-		end
-
-		if bind then stmt:bind(values) end
-
-		local ok, err = stmt:fetchone()
-		if not ok then
-			stmt:finalize()
-			return nil, err
-		end
-
-		ok, err = stmt:finalize()
-		if not ok then return nil, err end
-	until not sql
-	return true
-end
-
 return M
 
 -- vim: set ts=2 sw=2 noet:

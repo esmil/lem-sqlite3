@@ -206,11 +206,13 @@ bindtable(lua_State *T, sqlite3_stmt *stmt)
 
 error:
 	(void)sqlite3_clear_bindings(stmt);
+	luaL_where(T, 1);
 	if (name == NULL || name[0] == '?')
-		return luaL_error(T, "error binding %d: %s", i, err);
-
-	return luaL_error(T, "error binding '%s': %s", name, err);
-
+		lua_pushfstring(T, "error binding %d: %s", i, err);
+	else
+		lua_pushfstring(T, "error binding '%s': %s", name, err);
+	lua_concat(T, 2);
+	return -1;
 }
 
 static int
@@ -226,8 +228,11 @@ stmt_bind(lua_State *T)
 		return 2;
 	}
 
-	if (lua_type(T, 2) == LUA_TTABLE)
-		return bindtable(T, stmt->handle);
+	if (lua_type(T, 2) == LUA_TTABLE) {
+		if (bindtable(T, stmt->handle))
+			return lua_error(T);
+		return 0;
+	}
 
 	return bindargs(T, stmt->handle);
 }
@@ -294,7 +299,6 @@ db_prepare(lua_State *T)
 	struct db *db;
 	const char *sql;
 	size_t len;
-	const char *tail;
 	sqlite3_stmt *handle;
 	struct stmt *stmt;
 
@@ -308,8 +312,8 @@ db_prepare(lua_State *T)
 		return 2;
 	}
 
-	if (sqlite3_prepare_v2(db->handle, sql, len+1, &handle, &tail)
-	    != SQLITE_OK) {
+	if (sqlite3_prepare_v2(db->handle, sql, len+1, &handle, NULL)
+			!= SQLITE_OK) {
 		lua_pushnil(T);
 		lua_pushstring(T, sqlite3_errmsg(db->handle));
 		return 2;
@@ -330,13 +334,72 @@ db_prepare(lua_State *T)
 	lua_pushvalue(T, lua_upvalueindex(1));
 	lua_setmetatable(T, -2);
 
-	len -= tail - sql;
-	if (len > 0) {
-		lua_pushlstring(T, tail, len);
+	return 1;
+}
+
+static int
+db_exec(lua_State *T)
+{
+	struct db *db;
+	const char *sql;
+	size_t len;
+	unsigned int bind;
+
+	luaL_checktype(T, 1, LUA_TUSERDATA);
+	sql = luaL_checklstring(T, 2, &len);
+	bind = lua_gettop(T) > 2;
+	if (bind) {
+		luaL_checktype(T, 3, LUA_TTABLE);
+		lua_settop(T, 3);
+		lua_replace(T, 2);
+	}
+
+	db = db_unbox(T, 1);
+	if (db == NULL) {
+		lua_pushnil(T);
+		lua_pushliteral(T, "closed");
 		return 2;
 	}
 
+	do {
+		sqlite3_stmt *stmt;
+
+		if (sqlite3_prepare_v2(db->handle, sql, len+1, &stmt, &sql)
+				!= SQLITE_OK) {
+			lua_pushnil(T);
+			lua_pushstring(T, sqlite3_errmsg(db->handle));
+			return 2;
+		}
+
+		if (stmt == NULL)
+			break;
+
+		if (bind && bindtable(T, stmt)) {
+			(void)sqlite3_finalize(stmt);
+			return lua_error(T);
+		}
+
+		switch (sqlite3_step(stmt)) {
+		case SQLITE_ROW:
+		case SQLITE_DONE:
+			break;
+
+		default:
+			(void)sqlite3_finalize(stmt);
+			goto error;
+		}
+
+		if (sqlite3_finalize(stmt) != SQLITE_OK)
+			goto error;
+	} while (sql);
+
+	lua_pushboolean(T, 1);
 	return 1;
+
+error:
+	lua_pushnil(T);
+	lua_pushstring(T, sqlite3_errmsg(db->handle));
+	return 2;
 }
 
 static int
@@ -457,6 +520,9 @@ luaopen_lem_sqlite3_core(lua_State *L)
 	lua_getfield(L, -2, "Statement"); /* upvalue 1: Statement metatable */
 	lua_pushcclosure(L, db_prepare, 1);
 	lua_setfield(L, -2, "prepare");
+	/* insert exec method */
+	lua_pushcfunction(L, db_exec);
+	lua_setfield(L, -2, "exec");
 
 	/* insert open function */
 	lua_pushvalue(L, -1); /* upvalue 1: Connection metatable */
