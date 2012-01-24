@@ -167,6 +167,8 @@ bindtable(lua_State *T, sqlite3_stmt *stmt)
 		lua_settop(T, 2);
 		if (name == NULL || name[0] == '?')
 			lua_rawgeti(T, 2, i);
+		else if (name[0] == '@')
+			lua_getfield(T, 2, name + 1);
 		else
 			lua_getfield(T, 2, name);
 

@@ -101,8 +101,8 @@ CREATE TABLE purchases (
 		VALUES (@hash, @member, @balance)'))
 
 	for _, v in ipairs{
-		{ ['@hash'] = 'ABC', ['@member'] = 'Esmil',   ['@balance'] = 7 },
-		{ ['@hash'] = 'XYZ', ['@member'] = 'SiGNOUT', ['@balance'] = -1000 },
+		{ hash = 'ABC', member = 'Esmil',   balance = 7 },
+		{ hash = 'XYZ', member = 'SiGNOUT', balance = -1000 },
 --[=[
 --]]
 	local stmt = assert(db:prepare('\z
