@@ -65,7 +65,20 @@ end
 
 --package.path  = './?.lua;' .. package.path
 --package.cpath = './?.so;'  .. package.cpath
+local utils  = require 'lem.utils'
 local sqlite = require 'lem.sqlite3'
+
+local exit = false
+utils.spawn(function()
+	local write, yield = io.write, utils.yield
+	local sleeper = utils.sleeper()
+
+	repeat
+		write('.')
+		--yield()
+		sleeper:sleep(0.01)
+	until exit
+end)
 
 local db, err = sqlite.open('test.db', sqlite.READWRITE)
 
@@ -120,12 +133,17 @@ CREATE TABLE purchases (
 	assert(stmt:finalize())
 end
 
-prettyprint(assert(db:fetchall('SELECT * FROM accounts')))
+local res = assert(db:fetchall('SELECT * FROM accounts'))
+print()
+prettyprint(res)
 
 assert(db:close())
 
+print()
 printf("sqlite.READONLY  = %d\n", sqlite.READONLY)
 printf("sqlite.READWRITE = %d\n", sqlite.READWRITE)
 printf("sqlite.CREATE    = %d\n", sqlite.CREATE)
+
+exit = true
 
 -- vim: set ts=2 sw=2 noet:

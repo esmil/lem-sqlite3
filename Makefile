@@ -40,7 +40,7 @@ all: $(clibs)
 
 core.so: sqlite3.c
 	$E '  CCLD $@'
-	$Q$(CC) $(CFLAGS) -fPIC -nostartfiles $(SHARED) $< -o $@ $(LDFLAGS) -lsqlite3
+	$Q$(CC) $(CFLAGS) -fPIC -nostartfiles $(SHARED) $< -o $@ $(LDFLAGS) -lpthread -lsqlite3
 
 %-strip: %
 	$E '  STRIP $<'
