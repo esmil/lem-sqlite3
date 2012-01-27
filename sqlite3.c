@@ -340,6 +340,43 @@ stmt_bind(lua_State *T)
 	return bindargs(T, stmt->handle);
 }
 
+static int
+stmt_column_names(lua_State *T)
+{
+	struct stmt *stmt;
+	int columns;
+	int i;
+
+	luaL_checktype(T, 1, LUA_TUSERDATA);
+	stmt = lua_touserdata(T, 1);
+	if (stmt->handle == NULL) {
+		lua_pushnil(T);
+		lua_pushliteral(T, "finalized");
+		return 2;
+	}
+
+	if (stmt->db->w.data != NULL) {
+		lua_pushnil(T);
+		lua_pushliteral(T, "busy");
+		return 2;
+	}
+
+	columns = sqlite3_column_count(stmt->handle);
+	lua_createtable(T, columns, 0);
+	i = 0;
+	while (i < columns) {
+		const char *name = sqlite3_column_name(stmt->handle, i++);
+
+		if (name == NULL)
+			return luaL_error(T, "out of memory");
+
+		lua_pushstring(T, name);
+		lua_rawseti(T, -2, i);
+	}
+
+	return 1;
+}
+
 static void
 stmt_step_handler(EV_P_ ev_async *w, int revents)
 {
@@ -815,7 +852,7 @@ luaopen_lem_sqlite3_core(lua_State *L)
 	lua_createtable(L, 0, 11);
 
 	/* create Statement metatable */
-	lua_createtable(L, 0, 9);
+	lua_createtable(L, 0, 10);
 	lua_pushvalue(L, -1);
 	lua_setfield(L, -2, "__index");
 	/* insert __gc method */
@@ -827,6 +864,9 @@ luaopen_lem_sqlite3_core(lua_State *L)
 	/* insert bind method */
 	lua_pushcfunction(L, stmt_bind);
 	lua_setfield(L, -2, "bind");
+	/* insert column_names method */
+	lua_pushcfunction(L, stmt_column_names);
+	lua_setfield(L, -2, "column_names");
 	/* insert step method */
 	lua_pushcfunction(L, stmt_step);
 	lua_setfield(L, -2, "step");
