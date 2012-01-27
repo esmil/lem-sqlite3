@@ -647,6 +647,29 @@ db_exec(lua_State *T)
 }
 
 static int
+db_last_insert_rowid(lua_State *T)
+{
+	struct db *db;
+
+	luaL_checktype(T, 1, LUA_TUSERDATA);
+	db = db_unbox(T, 1);
+	if (db == NULL) {
+		lua_pushnil(T);
+		lua_pushliteral(T, "closed");
+		return 2;
+	}
+
+	if (db->w.data != NULL) {
+		lua_pushnil(T);
+		lua_pushliteral(T, "busy");
+		return 2;
+	}
+
+	lua_pushnumber(T, sqlite3_last_insert_rowid(db->handle));
+	return 1;
+}
+
+static int
 db_autocommit(lua_State *T)
 {
 	struct db *db;
@@ -814,7 +837,7 @@ luaopen_lem_sqlite3_core(lua_State *L)
 	lua_setfield(L, -2, "Statement");
 
 	/* create Connection metatable */
-	lua_createtable(L, 0, 9);
+	lua_createtable(L, 0, 10);
 	lua_pushvalue(L, -1);
 	lua_setfield(L, -2, "__index");
 	/* insert __gc method */
@@ -823,6 +846,9 @@ luaopen_lem_sqlite3_core(lua_State *L)
 	/* insert close method */
 	lua_pushcfunction(L, db_close);
 	lua_setfield(L, -2, "close");
+	/* insert last_insert_rowid method */
+	lua_pushcfunction(L, db_last_insert_rowid);
+	lua_setfield(L, -2, "last_insert_rowid");
 	/* insert autocommit method */
 	lua_pushcfunction(L, db_autocommit);
 	lua_setfield(L, -2, "autocommit");
