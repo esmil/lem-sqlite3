@@ -19,7 +19,7 @@ SHARED     = -shared
 endif
 
 clibs = core.so
-libs  = sqlite3.lua
+libs  = sqlite3.lua queued.lua
 
 ifdef NDEBUG
 CFLAGS += -DNDEBUG
@@ -49,12 +49,16 @@ core.so: sqlite3.c
 strip: $(clibs:%=%-strip)
 
 path-install:
-	$E '  INSTALL -d $(LUA_PATH)/lem'
-	$Q$(INSTALL) -d $(DESTDIR)$(LUA_PATH)/lem
+	$E '  INSTALL -d $(LUA_PATH)/lem/sqlite3'
+	$Q$(INSTALL) -d $(DESTDIR)$(LUA_PATH)/lem/sqlite3
+
+sqlite3.lua-install: sqlite3.lua path-install
+	$E '  INSTALL $<'
+	$Q$(INSTALL) -m644 $< $(DESTDIR)$(LUA_PATH)/lem/$<
 
 %.lua-install: %.lua path-install
 	$E '  INSTALL $<'
-	$Q$(INSTALL) -m644 $< $(DESTDIR)$(LUA_PATH)/lem/$<
+	$Q$(INSTALL) -m644 $< $(DESTDIR)$(LUA_PATH)/lem/sqlite3/$<
 
 cpath-install:
 	$E '  INSTALL -d $(LUA_CPATH)/lem/sqlite3'
