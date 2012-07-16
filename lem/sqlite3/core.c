@@ -85,7 +85,7 @@ db_worker(void *data)
 	lem_debug("OPEN");
 	db->ret = sqlite3_open_v2(db->req.open.filename,
 			&db->handle, db->req.open.flags, NULL);
-	ev_async_send(EV_G_ &db->w);
+	ev_async_send(LEM_ &db->w);
 
 	while (read(fd, &c, 1) > 0) {
 		switch (db->req.type) {
@@ -109,7 +109,7 @@ db_worker(void *data)
 		}
 
 		db->req.type = REQ_NONE;
-		ev_async_send(EV_G_ &db->w);
+		ev_async_send(LEM_ &db->w);
 	}
 
 	lem_debug("EXIT!");
@@ -436,7 +436,7 @@ stmt_step(lua_State *T)
 
 	db->w.cb = stmt_step_handler;
 	db->w.data = T;
-	ev_async_start(EV_G_ &db->w);
+	ev_async_start(LEM_ &db->w);
 	db->req.type = REQ_STEP;
 	db->req.prep.stmt = stmt->handle;
 	db_worker_notify(db);
@@ -542,7 +542,7 @@ db_prepare(lua_State *T)
 	db->refs++;
 	db->w.cb = db_prepare_handler;
 	db->w.data = T;
-	ev_async_start(EV_G_ &db->w);
+	ev_async_start(LEM_ &db->w);
 	db->req.type = REQ_PREP;
 	db->req.prep.sql = sql;
 	db->req.prep.len = len+1;
@@ -674,7 +674,7 @@ db_exec(lua_State *T)
 
 	db->w.cb = db_exec_prep_handler;
 	db->w.data = T;
-	ev_async_start(EV_G_ &db->w);
+	ev_async_start(LEM_ &db->w);
 	db->req.type = REQ_PREP;
 	db->req.prep.sql = sql;
 	db->req.prep.len = len+1;
@@ -747,7 +747,7 @@ db_close(lua_State *T)
 	if (db->w.data != NULL) {
 		lua_State *S = db->w.data;
 
-		ev_async_stop(EV_G_ &db->w);
+		ev_async_stop(LEM_ &db->w);
 		db->w.data = NULL;
 
 		lua_settop(S, 0);
@@ -818,7 +818,7 @@ db_open(lua_State *T)
 
 	db = lem_xmalloc(sizeof(struct db));
 	ev_async_init(&db->w, db_open_handler);
-	ev_async_start(EV_G_ &db->w);
+	ev_async_start(LEM_ &db->w);
 	db->w.data = T;
 	db->handle = NULL;
 	db->refs = 1;
@@ -827,7 +827,7 @@ db_open(lua_State *T)
 	db->req.open.filename = filename;
 	db->req.open.flags = flags;
 	if (pthread_create(&db->thread, NULL, db_worker, db)) {
-		ev_async_stop(EV_G_ &db->w);
+		ev_async_stop(LEM_ &db->w);
 		close(fds[0]);
 		close(fds[1]);
 		free(db);
