@@ -707,6 +707,29 @@ db_last_insert_rowid(lua_State *T)
 }
 
 static int
+db_changes(lua_State *T)
+{
+	struct db *db;
+
+	luaL_checktype(T, 1, LUA_TUSERDATA);
+	db = db_unbox(T, 1);
+	if (db == NULL) {
+		lua_pushnil(T);
+		lua_pushliteral(T, "closed");
+		return 2;
+	}
+
+	if (db->w.data != NULL) {
+		lua_pushnil(T);
+		lua_pushliteral(T, "busy");
+		return 2;
+	}
+
+	lua_pushnumber(T, sqlite3_changes(db->handle));
+	return 1;
+}
+
+static int
 db_autocommit(lua_State *T)
 {
 	struct db *db;
@@ -889,6 +912,9 @@ luaopen_lem_sqlite3_core(lua_State *L)
 	/* insert last_insert_rowid method */
 	lua_pushcfunction(L, db_last_insert_rowid);
 	lua_setfield(L, -2, "last_insert_rowid");
+	/* insert changes method */
+	lua_pushcfunction(L, db_changes);
+	lua_setfield(L, -2, "changes");
 	/* insert autocommit method */
 	lua_pushcfunction(L, db_autocommit);
 	lua_setfield(L, -2, "autocommit");

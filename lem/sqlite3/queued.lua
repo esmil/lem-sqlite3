@@ -78,6 +78,7 @@ do
 	end
 
 	Connection.last_insert_rowid  = db_wrap(sqlite3.Connection.last_insert_rowid)
+	Connection.changes            = db_wrap(sqlite3.Connection.changes)
 	Connection.autocommit         = db_wrap(sqlite3.Connection.autocommit)
 	Connection.exec               = db_wrap(sqlite3.Connection.exec)
 
