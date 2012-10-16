@@ -71,7 +71,7 @@ local sqlite = require 'lem.sqlite3'
 local exit = false
 utils.spawn(function()
 	local write, yield = io.write, utils.yield
-	local sleeper = utils.sleeper()
+	local sleeper = utils.newsleeper()
 
 	repeat
 		write('.')
