@@ -66,7 +66,8 @@ end
 --package.path  = './?.lua;' .. package.path
 --package.cpath = './?.so;'  .. package.cpath
 local utils  = require 'lem.utils'
-local sqlite = require 'lem.sqlite3'
+--local sqlite = require 'lem.sqlite3'
+local sqlite = require 'lem.sqlite3.queued'
 
 local exit = false
 utils.spawn(function()
@@ -112,6 +113,7 @@ CREATE TABLE purchases (
 	local stmt = assert(db:prepare('\z
 		INSERT INTO accounts (hash, member, balance) \z
 		VALUES (@hash, @member, @balance)'))
+	local queued = type(stmt) ~= 'userdata'
 
 	for _, v in ipairs{
 		{ hash = 'ABC', member = 'Esmil',   balance = 7 },
@@ -126,8 +128,13 @@ CREATE TABLE purchases (
 		{ 'XYZ', 'SiGNOUT', -1000 },
 --]=]
 	} do
-		stmt:bind(v)
-		assert(assert(stmt:step()) == true, 'hmm..')
+		local raw = stmt
+		if queued then raw = stmt:get() end
+
+		raw:bind(v)
+		assert(assert(raw:step()) == true, 'hmm..')
+
+		if queued then stmt:put() end
 	end
 
 	assert(stmt:finalize())
