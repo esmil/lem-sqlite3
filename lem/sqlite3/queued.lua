@@ -103,11 +103,10 @@ do
 		end
 	end
 
-	local Statement = sqlite3.Statement
-	Statement.finalize = stmt_wrap(Statement.finalize)
-	Statement.fetchall = stmt_wrap(Statement.fetchall)
-	Statement.fetchone = stmt_wrap(Statement.fetchone)
-	Statement.rows     = stmt_wrap(Statement.rows)
+	Statement.finalize = stmt_wrap(sqlite3.Statement.finalize)
+	Statement.fetchall = stmt_wrap(sqlite3.Statement.fetchall)
+	Statement.fetchone = stmt_wrap(sqlite3.Statement.fetchone)
+	Statement.rows     = stmt_wrap(sqlite3.Statement.rows)
 end
 
 local open
