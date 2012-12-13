@@ -108,6 +108,14 @@ db_unref(struct db *db)
 }
 
 static int
+stmt_finalized(lua_State *T)
+{
+	lua_pushnil(T);
+	lua_pushliteral(T, "finalized");
+	return 2;
+}
+
+static int
 stmt_finalize(lua_State *T)
 {
 	struct stmt *stmt;
@@ -116,12 +124,8 @@ stmt_finalize(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	stmt = lua_touserdata(T, 1);
-	if (stmt->handle == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "already finalized");
-		return 2;
-	}
-
+	if (stmt->handle == NULL)
+		return stmt_finalized(T);
 	db = stmt->db;
 	if (db->a.T != NULL)
 		return db_busy(T);
@@ -291,12 +295,8 @@ stmt_bind(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	stmt = lua_touserdata(T, 1);
-	if (stmt->handle == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "finalized");
-		return 2;
-	}
-
+	if (stmt->handle == NULL)
+		return stmt_finalized(T);
 	if (stmt->db->a.T != NULL)
 		return db_busy(T);
 
@@ -318,12 +318,8 @@ stmt_column_names(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	stmt = lua_touserdata(T, 1);
-	if (stmt->handle == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "finalized");
-		return 2;
-	}
-
+	if (stmt->handle == NULL)
+		return stmt_finalized(T);
 	if (stmt->db->a.T != NULL)
 		return db_busy(T);
 
@@ -385,12 +381,8 @@ stmt_step(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	stmt = lua_touserdata(T, 1);
-	if (stmt->handle == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "finalized");
-		return 2;
-	}
-
+	if (stmt->handle == NULL)
+		return stmt_finalized(T);
 	db = stmt->db;
 	if (db->a.T != NULL)
 		return db_busy(T);
@@ -410,12 +402,8 @@ stmt_reset(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	stmt = lua_touserdata(T, 1);
-	if (stmt->handle == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "finalized");
-		return 2;
-	}
-
+	if (stmt->handle == NULL)
+		return stmt_finalized(T);
 	if (stmt->db->a.T != NULL)
 		return db_busy(T);
 
