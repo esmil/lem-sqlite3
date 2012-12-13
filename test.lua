@@ -17,6 +17,9 @@
 -- along with lem-sqlite3.  If not, see <http://www.gnu.org/licenses/>.
 --
 
+package.path = '?.lua;' .. package.path
+package.cpath = '?.so;' .. package.cpath
+
 local format = string.format
 local write = io.write
 local tostring = tostring
@@ -63,9 +66,8 @@ local function prettyprint(t)
 	end
 end
 
---package.path  = './?.lua;' .. package.path
---package.cpath = './?.so;'  .. package.cpath
 local utils  = require 'lem.utils'
+local io     = require 'lem.io'
 --local sqlite = require 'lem.sqlite3'
 local sqlite = require 'lem.sqlite3.queued'
 
@@ -77,7 +79,7 @@ utils.spawn(function()
 	repeat
 		write('.')
 		--yield()
-		sleeper:sleep(0.01)
+		sleeper:sleep(0.001)
 	until exit
 end)
 

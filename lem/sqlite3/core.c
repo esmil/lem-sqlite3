@@ -21,40 +21,24 @@
 #include <string.h>
 #include <unistd.h>
 #include <lem.h>
-#include <pthread.h>
 #include <sqlite3.h>
 
-enum req {
-	REQ_NONE,
-	REQ_PREP,
-	REQ_STEP,
-};
-
-struct req_open {
-	enum req type;
-	int flags;
-	const char *filename;
-};
-
-struct req_prep {
-	enum req type;
-	int len;
-	const char *sql;
-	sqlite3_stmt *stmt;
-	const char *tail;
-};
-
 struct db {
-	ev_async w;
+	struct lem_async a;
 	sqlite3 *handle;
 	unsigned int refs;
-	int pipe;
 	int ret;
-	pthread_t thread;
 	union {
-		enum req type;
-		struct req_open open;
-		struct req_prep prep;
+		struct {
+			const char *filename;
+			int flags;
+		} open;
+		struct {
+			const char *sql;
+			sqlite3_stmt *stmt;
+			const char *tail;
+			int len;
+		} prep;
 	} req;
 };
 
@@ -64,57 +48,34 @@ struct box {
 #define db_unbox(T, idx) ((struct box *)lua_touserdata(T, idx))->db
 
 struct stmt {
-	sqlite3_stmt *handle;
 	struct db *db;
+	sqlite3_stmt *handle;
 };
 
 static void
-db_worker_notify(struct db *db)
+db_open_work(struct lem_async *a)
 {
-	char c;
-	(void)write(db->pipe, &c, 1);
-}
-
-static void *
-db_worker(void *data)
-{
-	struct db *db = data;
-	int fd = db->ret;
-	char c;
-
-	lem_debug("OPEN");
+	struct db *db = (struct db *)a;
 	db->ret = sqlite3_open_v2(db->req.open.filename,
 			&db->handle, db->req.open.flags, NULL);
-	ev_async_send(LEM_ &db->w);
+}
 
-	while (read(fd, &c, 1) > 0) {
-		switch (db->req.type) {
-		case REQ_NONE:
-			lem_debug("REQ_NONE");
-			continue;
+static void
+db_prepare_work(struct lem_async *a)
+{
+	struct db *db = (struct db *)a;
+	db->ret = sqlite3_prepare_v2(db->handle,
+			db->req.prep.sql,
+			db->req.prep.len,
+			&db->req.prep.stmt,
+			&db->req.prep.tail);
+}
 
-		case REQ_PREP:
-			lem_debug("REQ_PREP");
-			db->ret = sqlite3_prepare_v2(db->handle,
-					db->req.prep.sql,
-					db->req.prep.len,
-					&db->req.prep.stmt,
-					&db->req.prep.tail);
-			break;
-
-		case REQ_STEP:
-			lem_debug("REQ_STEP");
-			db->ret = sqlite3_step(db->req.prep.stmt);
-			break;
-		}
-
-		db->req.type = REQ_NONE;
-		ev_async_send(LEM_ &db->w);
-	}
-
-	lem_debug("EXIT!");
-	close(fd);
-	return NULL;
+static void
+db_step_work(struct lem_async *a)
+{
+	struct db *db = (struct db *)a;
+	db->ret = sqlite3_step(db->req.prep.stmt);
 }
 
 static void
@@ -126,8 +87,6 @@ db_unref(struct db *db)
 
 	lem_debug("db->refs = %d, freeing", db->refs);
 
-	pthread_detach(db->thread);
-	close(db->pipe);
 	(void)sqlite3_close(db->handle);
 	free(db);
 }
@@ -148,7 +107,7 @@ stmt_finalize(lua_State *T)
 	}
 
 	db = stmt->db;
-	if (db->w.data != NULL) {
+	if (db->a.T != NULL) {
 		lua_pushnil(T);
 		lua_pushliteral(T, "busy");
 		return 2;
@@ -325,7 +284,7 @@ stmt_bind(lua_State *T)
 		return 2;
 	}
 
-	if (stmt->db->w.data != NULL) {
+	if (stmt->db->a.T != NULL) {
 		lua_pushnil(T);
 		lua_pushliteral(T, "busy");
 		return 2;
@@ -355,7 +314,7 @@ stmt_column_names(lua_State *T)
 		return 2;
 	}
 
-	if (stmt->db->w.data != NULL) {
+	if (stmt->db->a.T != NULL) {
 		lua_pushnil(T);
 		lua_pushliteral(T, "busy");
 		return 2;
@@ -363,8 +322,7 @@ stmt_column_names(lua_State *T)
 
 	columns = sqlite3_column_count(stmt->handle);
 	lua_createtable(T, columns, 0);
-	i = 0;
-	while (i < columns) {
+	for (i = 0; i < columns;) {
 		const char *name = sqlite3_column_name(stmt->handle, i++);
 
 		if (name == NULL)
@@ -378,22 +336,20 @@ stmt_column_names(lua_State *T)
 }
 
 static void
-stmt_step_handler(EV_P_ ev_async *w, int revents)
+stmt_step_reap(struct lem_async *a)
 {
-	struct db *db = (struct db *)w;
-	lua_State *T = db->w.data;
+	struct db *db = (struct db *)a;
+	lua_State *T = db->a.T;
 	sqlite3_stmt *stmt = db->req.prep.stmt;
-	int ret = 1;
+	int ret;
 
-	(void)revents;
-
-	ev_async_stop(EV_A_ &db->w);
-	db->w.data = NULL;
+	db->a.T = NULL;
 
 	switch (db->ret) {
 	case SQLITE_ROW:
 		lem_debug("SQLITE_ROW");
 		pushrow(T, stmt);
+		ret = 1;
 		break;
 
 	case SQLITE_DONE:
@@ -401,6 +357,7 @@ stmt_step_handler(EV_P_ ev_async *w, int revents)
 		(void)sqlite3_reset(stmt);
 		(void)sqlite3_clear_bindings(stmt);
 		lua_pushboolean(T, 1);
+		ret = 1;
 		break;
 
 	default:
@@ -428,18 +385,14 @@ stmt_step(lua_State *T)
 	}
 
 	db = stmt->db;
-	if (db->w.data != NULL) {
+	if (db->a.T != NULL) {
 		lua_pushnil(T);
 		lua_pushliteral(T, "busy");
 		return 2;
 	}
 
-	db->w.cb = stmt_step_handler;
-	db->w.data = T;
-	ev_async_start(LEM_ &db->w);
-	db->req.type = REQ_STEP;
 	db->req.prep.stmt = stmt->handle;
-	db_worker_notify(db);
+	lem_async_do(&db->a, T, db_step_work, stmt_step_reap);
 
 	lua_settop(T, 1);
 	return lua_yield(T, 1);
@@ -459,7 +412,7 @@ stmt_reset(lua_State *T)
 		return 2;
 	}
 
-	if (stmt->db->w.data != NULL) {
+	if (stmt->db->a.T != NULL) {
 		lua_pushnil(T);
 		lua_pushliteral(T, "busy");
 		return 2;
@@ -478,16 +431,13 @@ stmt_reset(lua_State *T)
 }
 
 static void
-db_prepare_handler(EV_P_ ev_async *w, int revents)
+db_prepare_reap(struct lem_async *a)
 {
-	struct db *db = (struct db *)w;
-	lua_State *T = db->w.data;
-	int ret = 1;
+	struct db *db = (struct db *)a;
+	lua_State *T = db->a.T;
+	int ret;
 
-	(void)revents;
-
-	ev_async_stop(EV_A_ &db->w);
-	db->w.data = NULL;
+	db->a.T = NULL;
 
 	if (db->ret != SQLITE_OK) {
 		lem_debug("db->ret != SQLITE_OK");
@@ -511,6 +461,8 @@ db_prepare_handler(EV_P_ ev_async *w, int revents)
 		/* set metatable */
 		lua_pushvalue(T, 3);
 		lua_setmetatable(T, -2);
+
+		ret = 1;
 	}
 
 	lem_queue(T, ret);
@@ -533,46 +485,45 @@ db_prepare(lua_State *T)
 		return 2;
 	}
 
-	if (db->w.data != NULL) {
+	if (db->a.T != NULL) {
 		lua_pushnil(T);
 		lua_pushliteral(T, "busy");
 		return 2;
 	}
 
 	db->refs++;
-	db->w.cb = db_prepare_handler;
-	db->w.data = T;
-	ev_async_start(LEM_ &db->w);
-	db->req.type = REQ_PREP;
 	db->req.prep.sql = sql;
 	db->req.prep.len = len+1;
-	db_worker_notify(db);
+
+	lem_async_do(&db->a, T, db_prepare_work, db_prepare_reap);
 
 	lua_settop(T, 2);
 	lua_pushvalue(T, lua_upvalueindex(1));
 	return lua_yield(T, 3);
 }
 
-static void db_exec_step_handler(EV_P_ ev_async *w, int revents);
+static void db_exec_step_reap(struct lem_async *a);
 
 static void
-db_exec_prep_handler(EV_P_ ev_async *w, int revents)
+db_exec_prepare_reap(struct lem_async *a)
 {
-	struct db *db = (struct db *)w;
-	lua_State *T = db->w.data;
-	int ret = 1;
-
-	(void)revents;
+	struct db *db = (struct db *)a;
+	lua_State *T = db->a.T;
+	int ret;
 
 	if (db->ret != SQLITE_OK) {
+		lem_debug("db->ret != SQLITE_OK");
 		lua_pushnil(T);
 		lua_pushstring(T, sqlite3_errmsg(db->handle));
 		ret = 2;
 		goto out;
 	}
 
+	lem_debug("db->ret == SQLITE_OK");
 	if (db->req.prep.stmt == NULL) {
+		lem_debug("db->req.prep.stmt == NULL");
 		lua_pushboolean(T, 1);
+		ret = 1;
 		goto out;
 	}
 
@@ -584,26 +535,25 @@ db_exec_prep_handler(EV_P_ ev_async *w, int revents)
 		goto out;
 	}
 
-	db->w.cb = db_exec_step_handler;
-	db->req.type = REQ_STEP;
-	db_worker_notify(db);
+	db->a.work = db_step_work;
+	db->a.reap = db_exec_step_reap;
+	lem_async_put(&db->a);
 	return;
 
 out:
-	ev_async_stop(EV_A_ &db->w);
-	db->w.data = NULL;
+	db->a.T = NULL;
 	lem_queue(T, ret);
 }
 
 static void
-db_exec_step_handler(EV_P_ ev_async *w, int revents)
+db_exec_step_reap(struct lem_async *a)
 {
-	struct db *db = (struct db *)w;
-	lua_State *T = db->w.data;
-	int ret = 1;
+	struct db *db = (struct db *)a;
+	lua_State *T = db->a.T;
+	int ret;
 
-	(void)revents;
-
+	lem_debug("db->ret = %s", db->ret == SQLITE_ROW ? "SQLITE_ROW" :
+			db->ret == SQLITE_DONE ? "SQLITE_DONE" : "error");
 	switch (db->ret) {
 	case SQLITE_ROW:
 	case SQLITE_DONE:
@@ -626,19 +576,19 @@ db_exec_step_handler(EV_P_ ev_async *w, int revents)
 
 	if (db->req.prep.tail == NULL) {
 		lua_pushboolean(T, 1);
+		ret = 1;
 		goto out;
 	}
 
-	db->w.cb = db_exec_prep_handler;
-	db->req.type = REQ_PREP;
 	db->req.prep.len -= db->req.prep.tail - db->req.prep.sql;
 	db->req.prep.sql = db->req.prep.tail;
-	db_worker_notify(db);
+	db->a.work = db_prepare_work;
+	db->a.reap = db_exec_prepare_reap;
+	lem_async_put(&db->a);
 	return;
 
 out:
-	ev_async_stop(EV_A_ &db->w);
-	db->w.data = NULL;
+	db->a.T = NULL;
 	lem_queue(T, ret);
 }
 
@@ -666,19 +616,15 @@ db_exec(lua_State *T)
 		return 2;
 	}
 
-	if (db->w.data != NULL) {
+	if (db->a.T != NULL) {
 		lua_pushnil(T);
 		lua_pushliteral(T, "busy");
 		return 2;
 	}
 
-	db->w.cb = db_exec_prep_handler;
-	db->w.data = T;
-	ev_async_start(LEM_ &db->w);
-	db->req.type = REQ_PREP;
 	db->req.prep.sql = sql;
 	db->req.prep.len = len+1;
-	db_worker_notify(db);
+	lem_async_do(&db->a, T, db_prepare_work, db_exec_prepare_reap);
 
 	return lua_yield(T, bind ? 2 : 1);
 }
@@ -696,7 +642,7 @@ db_last_insert_rowid(lua_State *T)
 		return 2;
 	}
 
-	if (db->w.data != NULL) {
+	if (db->a.T != NULL) {
 		lua_pushnil(T);
 		lua_pushliteral(T, "busy");
 		return 2;
@@ -719,7 +665,7 @@ db_changes(lua_State *T)
 		return 2;
 	}
 
-	if (db->w.data != NULL) {
+	if (db->a.T != NULL) {
 		lua_pushnil(T);
 		lua_pushliteral(T, "busy");
 		return 2;
@@ -742,7 +688,7 @@ db_autocommit(lua_State *T)
 		return 2;
 	}
 
-	if (db->w.data != NULL) {
+	if (db->a.T != NULL) {
 		lua_pushnil(T);
 		lua_pushliteral(T, "busy");
 		return 2;
@@ -767,16 +713,10 @@ db_close(lua_State *T)
 		return 2;
 	}
 
-	if (db->w.data != NULL) {
-		lua_State *S = db->w.data;
-
-		ev_async_stop(LEM_ &db->w);
-		db->w.data = NULL;
-
-		lua_settop(S, 0);
-		lua_pushnil(S);
-		lua_pushliteral(S, "interrupted");
-		lem_queue(S, 2);
+	if (db->a.T != NULL) {
+		lua_pushnil(T);
+		lua_pushliteral(T, "busy");
+		return 2;
 	}
 
 	db_unref(db);
@@ -787,16 +727,13 @@ db_close(lua_State *T)
 }
 
 static void
-db_open_handler(EV_P_ ev_async *w, int revents)
+db_open_reap(struct lem_async *a)
 {
-	struct db *db = (struct db *)w;
-	lua_State *T = db->w.data;
-	int ret = 1;
+	struct db *db = (struct db *)a;
+	lua_State *T = db->a.T;
+	int ret;
 
-	(void)revents;
-
-	ev_async_stop(EV_A_ &db->w);
-	db->w.data = NULL;
+	db->a.T = NULL;
 
 	if (db->handle == NULL) {
 		lem_debug("db->handle == NULL");
@@ -819,6 +756,8 @@ db_open_handler(EV_P_ ev_async *w, int revents)
 		/* set metatable */
 		lua_pushvalue(T, 2);
 		lua_setmetatable(T, -2);
+
+		ret = 1;
 	}
 
 	lem_queue(T, ret);
@@ -830,34 +769,13 @@ db_open(lua_State *T)
 	const char *filename = luaL_checkstring(T, 1);
 	int flags = luaL_optnumber(T, 2, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
 	struct db *db;
-	int fds[2];
-
-	if (pipe(fds)) {
-		lua_pushnil(T);
-		lua_pushfstring(T, "error creating pipe: %s",
-				strerror(errno));
-		return 2;
-	}
 
 	db = lem_xmalloc(sizeof(struct db));
-	ev_async_init(&db->w, db_open_handler);
-	ev_async_start(LEM_ &db->w);
-	db->w.data = T;
 	db->handle = NULL;
 	db->refs = 1;
-	db->ret = fds[0];
-	db->pipe = fds[1];
 	db->req.open.filename = filename;
 	db->req.open.flags = flags;
-	if (pthread_create(&db->thread, NULL, db_worker, db)) {
-		ev_async_stop(LEM_ &db->w);
-		close(fds[0]);
-		close(fds[1]);
-		free(db);
-		lua_pushnil(T);
-		lua_pushliteral(T, "error creating worker thread");
-		return 2;
-	}
+	lem_async_do(&db->a, T, db_open_work, db_open_reap);
 
 	lua_settop(T, 1);
 	lua_pushvalue(T, lua_upvalueindex(1));

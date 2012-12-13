@@ -35,7 +35,7 @@ all: $(clibs)
 
 debug: $(clibs)
 
-lem/sqlite3/core.so: LIBS += -lsqlite3 -lpthread
+lem/sqlite3/core.so: LIBS += -lsqlite3
 lem/sqlite3/core.so: lem/sqlite3/core.c
 	$E '  CCLD  $@'
 	$Q$(CC) $(CFLAGS) -fPIC -nostartfiles $(SHARED) $^ -o $@ $(LDFLAGS) $(LIBS)
