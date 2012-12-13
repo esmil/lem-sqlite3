@@ -79,6 +79,14 @@ db_step_work(struct lem_async *a)
 }
 
 static int
+db_closed(lua_State *T)
+{
+	lua_pushnil(T);
+	lua_pushliteral(T, "closed");
+	return 2;
+}
+
+static int
 db_busy(lua_State *T)
 {
 	lua_pushnil(T);
@@ -472,12 +480,8 @@ db_prepare(lua_State *T)
 	sql = luaL_checklstring(T, 2, &len);
 
 	db = db_unbox(T, 1);
-	if (db == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "closed");
-		return 2;
-	}
-
+	if (db == NULL)
+		return db_closed(T);
 	if (db->a.T != NULL)
 		return db_busy(T);
 
@@ -600,12 +604,8 @@ db_exec(lua_State *T)
 	}
 
 	db = db_unbox(T, 1);
-	if (db == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "closed");
-		return 2;
-	}
-
+	if (db == NULL)
+		return db_closed(T);
 	if (db->a.T != NULL)
 		return db_busy(T);
 
@@ -623,12 +623,8 @@ db_last_insert_rowid(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	db = db_unbox(T, 1);
-	if (db == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "closed");
-		return 2;
-	}
-
+	if (db == NULL)
+		return db_closed(T);
 	if (db->a.T != NULL)
 		return db_busy(T);
 
@@ -643,12 +639,8 @@ db_changes(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	db = db_unbox(T, 1);
-	if (db == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "closed");
-		return 2;
-	}
-
+	if (db == NULL)
+		return db_closed(T);
 	if (db->a.T != NULL)
 		return db_busy(T);
 
@@ -663,12 +655,8 @@ db_autocommit(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	db = db_unbox(T, 1);
-	if (db == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "closed");
-		return 2;
-	}
-
+	if (db == NULL)
+		return db_closed(T);
 	if (db->a.T != NULL)
 		return db_busy(T);
 
@@ -685,12 +673,8 @@ db_close(lua_State *T)
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	box = lua_touserdata(T, 1);
 	db = box->db;
-	if (db == NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "already closed");
-		return 2;
-	}
-
+	if (db == NULL)
+		return db_closed(T);
 	if (db->a.T != NULL)
 		return db_busy(T);
 
