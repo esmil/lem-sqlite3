@@ -78,6 +78,14 @@ db_step_work(struct lem_async *a)
 	db->ret = sqlite3_step(db->req.prep.stmt);
 }
 
+static int
+db_busy(lua_State *T)
+{
+	lua_pushnil(T);
+	lua_pushliteral(T, "busy");
+	return 2;
+}
+
 static void
 db_unref(struct db *db)
 {
@@ -107,11 +115,8 @@ stmt_finalize(lua_State *T)
 	}
 
 	db = stmt->db;
-	if (db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (db->a.T != NULL)
+		return db_busy(T);
 
 	if (sqlite3_finalize(stmt->handle) == SQLITE_OK) {
 		lua_pushboolean(T, 1);
@@ -284,11 +289,8 @@ stmt_bind(lua_State *T)
 		return 2;
 	}
 
-	if (stmt->db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (stmt->db->a.T != NULL)
+		return db_busy(T);
 
 	if (lua_type(T, 2) == LUA_TTABLE) {
 		if (bindtable(T, stmt->handle))
@@ -314,11 +316,8 @@ stmt_column_names(lua_State *T)
 		return 2;
 	}
 
-	if (stmt->db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (stmt->db->a.T != NULL)
+		return db_busy(T);
 
 	columns = sqlite3_column_count(stmt->handle);
 	lua_createtable(T, columns, 0);
@@ -385,11 +384,8 @@ stmt_step(lua_State *T)
 	}
 
 	db = stmt->db;
-	if (db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (db->a.T != NULL)
+		return db_busy(T);
 
 	db->req.prep.stmt = stmt->handle;
 	lem_async_do(&db->a, T, db_step_work, stmt_step_reap);
@@ -412,11 +408,8 @@ stmt_reset(lua_State *T)
 		return 2;
 	}
 
-	if (stmt->db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (stmt->db->a.T != NULL)
+		return db_busy(T);
 
 	ret = sqlite3_reset(stmt->handle);
 	(void)sqlite3_clear_bindings(stmt->handle);
@@ -485,11 +478,8 @@ db_prepare(lua_State *T)
 		return 2;
 	}
 
-	if (db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (db->a.T != NULL)
+		return db_busy(T);
 
 	db->refs++;
 	db->req.prep.sql = sql;
@@ -616,11 +606,8 @@ db_exec(lua_State *T)
 		return 2;
 	}
 
-	if (db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (db->a.T != NULL)
+		return db_busy(T);
 
 	db->req.prep.sql = sql;
 	db->req.prep.len = len+1;
@@ -642,11 +629,8 @@ db_last_insert_rowid(lua_State *T)
 		return 2;
 	}
 
-	if (db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (db->a.T != NULL)
+		return db_busy(T);
 
 	lua_pushnumber(T, sqlite3_last_insert_rowid(db->handle));
 	return 1;
@@ -665,11 +649,8 @@ db_changes(lua_State *T)
 		return 2;
 	}
 
-	if (db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (db->a.T != NULL)
+		return db_busy(T);
 
 	lua_pushnumber(T, sqlite3_changes(db->handle));
 	return 1;
@@ -688,11 +669,8 @@ db_autocommit(lua_State *T)
 		return 2;
 	}
 
-	if (db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (db->a.T != NULL)
+		return db_busy(T);
 
 	lua_pushboolean(T, sqlite3_get_autocommit(db->handle));
 	return 1;
@@ -713,11 +691,8 @@ db_close(lua_State *T)
 		return 2;
 	}
 
-	if (db->a.T != NULL) {
-		lua_pushnil(T);
-		lua_pushliteral(T, "busy");
-		return 2;
-	}
+	if (db->a.T != NULL)
+		return db_busy(T);
 
 	db_unref(db);
 	box->db = NULL;
