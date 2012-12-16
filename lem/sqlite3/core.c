@@ -56,8 +56,12 @@ static void
 db_open_work(struct lem_async *a)
 {
 	struct db *db = (struct db *)a;
+#if SQLITE_VERSION_NUMBER >= 3005000
 	db->ret = sqlite3_open_v2(db->req.open.filename,
 			&db->handle, db->req.open.flags, NULL);
+#else
+	db->ret = sqlite3_open(db->req.open.filename, &db->handle);
+#endif
 }
 
 static void
@@ -714,14 +718,18 @@ static int
 db_open(lua_State *T)
 {
 	const char *filename = luaL_checkstring(T, 1);
+#if SQLITE_VERSION_NUMBER >= 3005000
 	int flags = luaL_optnumber(T, 2, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+#endif
 	struct db *db;
 
 	db = lem_xmalloc(sizeof(struct db));
 	db->handle = NULL;
 	db->refs = 1;
 	db->req.open.filename = filename;
+#if SQLITE_VERSION_NUMBER >= 3005000
 	db->req.open.flags = flags;
+#endif
 	lem_async_do(&db->a, T, db_open_work, db_open_reap);
 
 	lua_settop(T, 1);
@@ -799,6 +807,7 @@ luaopen_lem_sqlite3_core(lua_State *L)
 	/* insert Connection metatable */
 	lua_setfield(L, -2, "Connection");
 
+#if SQLITE_VERSION_NUMBER >= 3005000
 	set_open_constant(L, NOMUTEX);
 	set_open_constant(L, FULLMUTEX);
 	set_open_constant(L, SHAREDCACHE);
@@ -808,6 +817,7 @@ luaopen_lem_sqlite3_core(lua_State *L)
 	set_open_constant(L, READONLY);
 	set_open_constant(L, READWRITE);
 	set_open_constant(L, CREATE);
+#endif
 
 	return 1;
 }
