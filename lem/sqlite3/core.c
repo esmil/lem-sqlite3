@@ -25,6 +25,7 @@
 
 struct db {
 	struct lem_async a;
+	lua_State *T;
 	sqlite3 *handle;
 	unsigned int refs;
 	int ret;
@@ -131,7 +132,7 @@ stmt_finalize(lua_State *T)
 	if (stmt->handle == NULL)
 		return stmt_finalized(T);
 	db = stmt->db;
-	if (db->a.T != NULL)
+	if (db->T != NULL)
 		return db_busy(T);
 
 	if (sqlite3_finalize(stmt->handle) == SQLITE_OK) {
@@ -301,7 +302,7 @@ stmt_bind(lua_State *T)
 	stmt = lua_touserdata(T, 1);
 	if (stmt->handle == NULL)
 		return stmt_finalized(T);
-	if (stmt->db->a.T != NULL)
+	if (stmt->db->T != NULL)
 		return db_busy(T);
 
 	if (lua_type(T, 2) == LUA_TTABLE) {
@@ -324,7 +325,7 @@ stmt_column_names(lua_State *T)
 	stmt = lua_touserdata(T, 1);
 	if (stmt->handle == NULL)
 		return stmt_finalized(T);
-	if (stmt->db->a.T != NULL)
+	if (stmt->db->T != NULL)
 		return db_busy(T);
 
 	columns = sqlite3_column_count(stmt->handle);
@@ -346,11 +347,9 @@ static void
 stmt_step_reap(struct lem_async *a)
 {
 	struct db *db = (struct db *)a;
-	lua_State *T = db->a.T;
+	lua_State *T = db->T;
 	sqlite3_stmt *stmt = db->req.prep.stmt;
 	int ret;
-
-	db->a.T = NULL;
 
 	switch (db->ret) {
 	case SQLITE_ROW:
@@ -375,6 +374,7 @@ stmt_step_reap(struct lem_async *a)
 	}
 
 	lem_queue(T, ret);
+	db->T = NULL;
 }
 
 static int
@@ -388,11 +388,12 @@ stmt_step(lua_State *T)
 	if (stmt->handle == NULL)
 		return stmt_finalized(T);
 	db = stmt->db;
-	if (db->a.T != NULL)
+	if (db->T != NULL)
 		return db_busy(T);
 
+	db->T = T;
 	db->req.prep.stmt = stmt->handle;
-	lem_async_do(&db->a, T, db_step_work, stmt_step_reap);
+	lem_async_do(&db->a, db_step_work, stmt_step_reap);
 
 	lua_settop(T, 1);
 	return lua_yield(T, 1);
@@ -408,7 +409,7 @@ stmt_reset(lua_State *T)
 	stmt = lua_touserdata(T, 1);
 	if (stmt->handle == NULL)
 		return stmt_finalized(T);
-	if (stmt->db->a.T != NULL)
+	if (stmt->db->T != NULL)
 		return db_busy(T);
 
 	ret = sqlite3_reset(stmt->handle);
@@ -427,10 +428,8 @@ static void
 db_prepare_reap(struct lem_async *a)
 {
 	struct db *db = (struct db *)a;
-	lua_State *T = db->a.T;
+	lua_State *T = db->T;
 	int ret;
-
-	db->a.T = NULL;
 
 	if (db->ret != SQLITE_OK) {
 		lem_debug("db->ret != SQLITE_OK");
@@ -459,6 +458,7 @@ db_prepare_reap(struct lem_async *a)
 	}
 
 	lem_queue(T, ret);
+	db->T = NULL;
 }
 
 static int
@@ -474,14 +474,14 @@ db_prepare(lua_State *T)
 	db = db_unbox(T, 1);
 	if (db == NULL)
 		return db_closed(T);
-	if (db->a.T != NULL)
+	if (db->T != NULL)
 		return db_busy(T);
 
+	db->T = T;
 	db->refs++;
 	db->req.prep.sql = sql;
 	db->req.prep.len = len+1;
-
-	lem_async_do(&db->a, T, db_prepare_work, db_prepare_reap);
+	lem_async_do(&db->a, db_prepare_work, db_prepare_reap);
 
 	lua_settop(T, 2);
 	lua_pushvalue(T, lua_upvalueindex(1));
@@ -494,7 +494,7 @@ static void
 db_exec_prepare_reap(struct lem_async *a)
 {
 	struct db *db = (struct db *)a;
-	lua_State *T = db->a.T;
+	lua_State *T = db->T;
 	int ret;
 
 	if (db->ret != SQLITE_OK) {
@@ -523,19 +523,18 @@ db_exec_prepare_reap(struct lem_async *a)
 
 	db->a.work = db_step_work;
 	db->a.reap = db_exec_step_reap;
-	lem_async_put(&db->a);
+	lem_async_run(&db->a);
 	return;
-
 out:
-	db->a.T = NULL;
 	lem_queue(T, ret);
+	db->T = NULL;
 }
 
 static void
 db_exec_step_reap(struct lem_async *a)
 {
 	struct db *db = (struct db *)a;
-	lua_State *T = db->a.T;
+	lua_State *T = db->T;
 	int ret;
 
 	lem_debug("db->ret = %s", db->ret == SQLITE_ROW ? "SQLITE_ROW" :
@@ -570,12 +569,11 @@ db_exec_step_reap(struct lem_async *a)
 	db->req.prep.sql = db->req.prep.tail;
 	db->a.work = db_prepare_work;
 	db->a.reap = db_exec_prepare_reap;
-	lem_async_put(&db->a);
+	lem_async_run(&db->a);
 	return;
-
 out:
-	db->a.T = NULL;
 	lem_queue(T, ret);
+	db->T = NULL;
 }
 
 static int
@@ -598,12 +596,13 @@ db_exec(lua_State *T)
 	db = db_unbox(T, 1);
 	if (db == NULL)
 		return db_closed(T);
-	if (db->a.T != NULL)
+	if (db->T != NULL)
 		return db_busy(T);
 
+	db->T = T;
 	db->req.prep.sql = sql;
 	db->req.prep.len = len+1;
-	lem_async_do(&db->a, T, db_prepare_work, db_exec_prepare_reap);
+	lem_async_do(&db->a, db_prepare_work, db_exec_prepare_reap);
 
 	return lua_yield(T, bind ? 2 : 1);
 }
@@ -617,7 +616,7 @@ db_last_insert_rowid(lua_State *T)
 	db = db_unbox(T, 1);
 	if (db == NULL)
 		return db_closed(T);
-	if (db->a.T != NULL)
+	if (db->T != NULL)
 		return db_busy(T);
 
 	lua_pushnumber(T, sqlite3_last_insert_rowid(db->handle));
@@ -633,7 +632,7 @@ db_changes(lua_State *T)
 	db = db_unbox(T, 1);
 	if (db == NULL)
 		return db_closed(T);
-	if (db->a.T != NULL)
+	if (db->T != NULL)
 		return db_busy(T);
 
 	lua_pushnumber(T, sqlite3_changes(db->handle));
@@ -649,7 +648,7 @@ db_autocommit(lua_State *T)
 	db = db_unbox(T, 1);
 	if (db == NULL)
 		return db_closed(T);
-	if (db->a.T != NULL)
+	if (db->T != NULL)
 		return db_busy(T);
 
 	lua_pushboolean(T, sqlite3_get_autocommit(db->handle));
@@ -667,7 +666,7 @@ db_close(lua_State *T)
 	db = box->db;
 	if (db == NULL)
 		return db_closed(T);
-	if (db->a.T != NULL)
+	if (db->T != NULL)
 		return db_busy(T);
 
 	db_unref(db);
@@ -681,10 +680,8 @@ static void
 db_open_reap(struct lem_async *a)
 {
 	struct db *db = (struct db *)a;
-	lua_State *T = db->a.T;
+	lua_State *T = db->T;
 	int ret;
-
-	db->a.T = NULL;
 
 	if (db->handle == NULL) {
 		lem_debug("db->handle == NULL");
@@ -712,6 +709,7 @@ db_open_reap(struct lem_async *a)
 	}
 
 	lem_queue(T, ret);
+	db->T = NULL;
 }
 
 static int
@@ -724,13 +722,14 @@ db_open(lua_State *T)
 	struct db *db;
 
 	db = lem_xmalloc(sizeof(struct db));
+	db->T = T;
 	db->handle = NULL;
 	db->refs = 1;
 	db->req.open.filename = filename;
 #if SQLITE_VERSION_NUMBER >= 3005000
 	db->req.open.flags = flags;
 #endif
-	lem_async_do(&db->a, T, db_open_work, db_open_reap);
+	lem_async_do(&db->a, db_open_work, db_open_reap);
 
 	lua_settop(T, 1);
 	lua_pushvalue(T, lua_upvalueindex(1));
