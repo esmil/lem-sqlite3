@@ -1,12 +1,13 @@
-CC         = gcc -std=gnu99
-CFLAGS    ?= -O2 -pipe -Wall -Wextra
-PKG_CONFIG = pkg-config
-STRIP      = strip
+CC         = $(CROSS_COMPILE)gcc -std=gnu99
+PKG_CONFIG = $(CROSS_COMPILE)pkg-config
+STRIP      = $(CROSS_COMPILE)strip
 INSTALL    = install
 UNAME      = uname
 
 OS         = $(shell $(UNAME))
+CFLAGS    ?= -O2 -pipe -Wall -Wextra
 CFLAGS    += $(shell $(PKG_CONFIG) --cflags lem)
+LIBS       = -lsqlite3
 lmoddir    = $(shell $(PKG_CONFIG) --variable=INSTALL_LMOD lem)
 cmoddir    = $(shell $(PKG_CONFIG) --variable=INSTALL_CMOD lem)
 
@@ -35,10 +36,9 @@ all: $(clibs)
 
 debug: $(clibs)
 
-lem/sqlite3/core.so: LIBS += -lsqlite3
-lem/sqlite3/core.so: lem/sqlite3/core.c
+%.so: %.c
 	$E '  CCLD  $@'
-	$Q$(CC) $(CFLAGS) -fPIC -nostartfiles $(SHARED) $^ -o $@ $(LDFLAGS) $(LIBS)
+	$Q$(CC) $(CFLAGS) -fPIC -nostartfiles $(CPPFLAGS) $(SHARED) $^ -o $@ $(LDFLAGS) $(LIBS)
 
 %-strip: %
 	$E '  STRIP $<'
